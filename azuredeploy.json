@@ -1,0 +1,181 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "automationAccount": {
+            "type": "string"
+        },
+        "location": {
+          "type": "string",
+          "metadata": {
+            "description": "the location of the workers.. this must match the virtual network"
+          }
+        },
+        "networkRG": {
+            "type": "string"
+        },
+        "virtualNetwork": {
+            "type": "string"
+        },
+        "subnet": {
+            "type": "string"
+        },
+        "minWorkers": {
+            "type": "int",
+            "defaultValue": 1,
+            "minValue": 1,
+            "maxValue": 4
+        },
+        "maxWorkers": {
+            "type": "int",
+            "defaultValue": 2,
+            "minValue": 2,
+            "maxValue": 10
+        },
+        "workerSize": {
+            "type": "string",
+            "defaultValue": "Standard_A3"
+        },
+        "adminUsername": {
+            "type": "string"
+        },
+        "adminPassword": {
+            "type": "securestring"
+        },
+        "keyVaultRG": {
+            "type": "string"
+        },
+        "keyVault": {
+            "type": "string"
+        },
+        "certSecrets": {
+            "type": "array"
+        }
+    },
+    "variables": {
+        "repoBaseURL": "https://raw.githubusercontent.com/bennbatt8112/AutomationWorkers/master/",
+        "aaLocation": "eastus2",
+        "tags": {
+            "appName": "Automation Engine",
+            "owner": "bennbatt8112"
+        },
+        "vnetApiVersion": "2018-08-01",
+        "vnetID": "[resourceId(parameters('networkRG'),'Microsoft.Network/virtualNetworks',parameters('virtualNetwork'))]",
+        "subnetID": "[resourceId(parameters('networkRG'),'Microsoft.Network/virtualNetworks/subnets',parameters('virtualNetwork'),parameters('subnet'))]",
+        "VMSSName": "HRWPool",
+        "workerPrefix": "worker",
+        "nicName": "[concat('workerPrefix','-nic')]",
+        "VMSSSku": {
+            "name": "[parameters('workerSize')]",
+            "tier": "Standard",
+            "capacity": "[parameters('minWorkers')]"
+        },
+        "keyVaultApiVersion": "2016-10-01",
+        "keyVaultId": "[resourceId(parameters('keyVaultRG'),'Microsoft.KeyVault/vaults',parameters('keyVault'))]",
+        "vmImageRef": {
+          "publisher": "MicrosoftWindowsServer",
+          "offer": "WindowsServer",
+          "sku": "2016-Datacenter",
+          "version": "latest"
+        },
+        "diskSizeGB": 128,
+        "storageAccountType": "Standard_LRS"
+    },
+    "resources": [
+        {
+            "name": "[parameters('automationAccount')]",
+            "type": "Microsoft.Automation/automationAccounts",
+            "apiVersion": "2015-10-31",
+            "properties": {
+              "sku": {
+                "name": "Basic"
+              }
+            },
+            "location": "[variables('aaLocation')]",
+            "tags": "[variables('tags')]"
+        },
+        {
+            "name": "[variables('VMSSName')]",
+            "type": "Microsoft.Compute/virtualMachineScaleSets",
+            "apiVersion": "2018-06-01",
+            "location": "[parameters('location')]",
+            "tags": "[variables('tags')]",
+            "sku": "[variables('VMSSSku')]",
+            "properties": {
+              "upgradePolicy": {
+                "mode": "Manual"
+              },
+              "virtualMachineProfile": {
+                "osProfile": {
+                  "computerNamePrefix": "[variables('workerPrefix')]",
+                  "adminUsername": "[parameters('adminUsername')]",
+                  "adminPassword": "[parameters('adminPassword')]",
+                  "windowsConfiguration": {
+                    "provisionVMAgent": true,
+                    "timeZone": "UTC"
+                  },
+                  "secrets": [
+                    {
+                      "sourceVault": {
+                        "id": "[variables('keyVaultId')]"
+                      },
+                      "copy": [
+                        {
+                          "name": "vaultCertificates",
+                          "count": "[length(parameters('certSecrets'))]",
+                          "input": {
+                            "certificateUrl": "[reference(resourceId(parameters('keyVaultRG'),'Microsoft.KeyVault/vaults/secrets',parameters('keyVault'),parameters('certSecrets')[copyIndex('vaultCertificates')]),variables('keyVaultApiVersion'),'Full').properties.secretUriWithVersion]",
+                            "certificateStore": "Root"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "storageProfile": {
+                  "imageReference": "[variables('vmImageRef')]",
+                  "osDisk": {
+                    "caching": "None",
+                    "createOption": "FromImage",
+                    "osType": "Windows",
+                    "managedDisk": {
+                      "storageAccountType": "[variables('storageAccountType')]"
+                    }
+                  }
+                },
+                "networkProfile": {
+                  "networkInterfaceConfigurations": [
+                    {
+                      "name": "[variables('nicName')]",
+                      "properties": {
+                        "primary": true,
+                        "ipConfigurations": [
+                          {
+                            "name": "ipconfig1",
+                            "properties": {
+                              "subnet": {
+                                "id": "[variables('subnetId')]"
+                              },
+                              "privateIPAddressVersion": "IPv4"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "extensionProfile": {
+                  "extensions": [
+                  ]
+                },
+                "priority": "Low",
+                "evictionPolicy": "Delete"
+              },
+              "overprovision": true
+            },
+            "resources": []
+        }
+    ],
+    "outputs": {
+    }
+  }
